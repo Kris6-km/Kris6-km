@@ -59,9 +59,12 @@ Backend FastAPI (/app/backend — chmura Emergent, publiczny)
 - [x] Autoanaliza po skanie (checkbox w WebUI)
 - [x] NL command → auto-wypełnienie zakładki Rejestry + Wykonaj
 - [x] Smoke test wszystkich AI endpointów (200 OK, streaming OK)
+- [x] (2026-06) Skaner CAN: TWAI listen-only, unikalne ID 11/29-bit, auto-detekcja bitrate, zakładka LCD + WebUI, wysyłanie ramki testowej, CSV na SD
+- [x] (2026-06) Migracja na Arduino-ESP32 3.3.11 (pioarduino) + biblioteki Waveshare (Arduino_GFX, SensorLib GT911, WS_CH32_IO); poprawione piny SD (SD_MMC 2/1/4 — stare 10-13 kolidowały z LCD)
+- [x] (2026-06) Firmware kompiluje się: RAM 15.2%, Flash 22.1%; obraz LittleFS OK
 
 ## Prioritized backlog
-- [ ] **P1** CAN bus skaner (TWAI driver + TJA1051T), analogiczna zakładka LCD/WebUI
+- [ ] **P1** CAN: dekodowanie znanych protokołów (OBD-II, J1939, CANopen) + AI interpretacja ID
 - [ ] **P1** Zapis rejestrów (FC 0x06, 0x10) z confirm dialog
 - [ ] **P2** Harmonogram cyklicznych odczytów + wykres LVGL (chart widget)
 - [ ] **P2** Eksport danych MQTT lub InfluxDB

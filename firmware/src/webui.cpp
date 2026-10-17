@@ -1,6 +1,7 @@
 #include "webui.h"
 #include "config.h"
 #include "modbus_scanner.h"
+#include "can_scanner.h"
 #include "settings.h"
 #include "storage.h"
 #include "ui.h"
@@ -11,6 +12,10 @@
 
 extern ScannerSettings g_settings;
 extern std::vector<ModbusDevice> g_last_scan;
+
+// CAN state shared with /api/can/*
+static std::vector<CanNode> g_last_can_web;
+static volatile bool _canBusy = false;
 
 static AsyncWebServer server(WEB_PORT);
 static bool _apMode = false;
@@ -177,6 +182,99 @@ void web_begin() {
     server.on("/api/settings", HTTP_POST,
               [](AsyncWebServerRequest *){}, nullptr, handle_settings_post);
     server.on("/api/read",   HTTP_GET, handle_read_regs);
+
+    // ---------- CAN ----------
+    server.on("/api/can/status", HTTP_GET, [](AsyncWebServerRequest *req){
+        JsonDocument doc;
+        doc["busy"]    = _canBusy;
+        doc["bitrate"] = g_settings.canBitrate;
+        doc["autobaud"]= g_settings.canAutoBaud;
+        doc["scanMs"]  = g_settings.canScanMs;
+        JsonArray arr = doc["nodes"].to<JsonArray>();
+        for (auto &n : g_last_can_web) {
+            JsonObject o = arr.add<JsonObject>();
+            o["id"] = n.id;
+            o["extended"] = n.extended;
+            o["dlc"] = n.dlc;
+            o["frames"] = n.frameCount;
+            char hex[20];
+            char *p = hex;
+            for (int i = 0; i < n.dlc && i < 8; ++i) p += sprintf(p, "%02X ", n.lastData[i]);
+            if (p > hex) *(p-1) = 0;
+            o["data"] = hex;
+        }
+        String out; serializeJson(doc, out);
+        req->send(200, "application/json", out);
+    });
+
+    server.on("/api/can/scan", HTTP_POST,
+        [](AsyncWebServerRequest *req){},
+        nullptr,
+        [](AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t, size_t){
+            if (_canBusy) { req->send(409, "application/json", "{\"error\":\"busy\"}"); return; }
+            JsonDocument doc;
+            if (len > 0 && deserializeJson(doc, data, len) == DeserializationError::Ok) {
+                if (doc["bitrate"].is<uint32_t>()) g_settings.canBitrate  = doc["bitrate"];
+                if (doc["autobaud"].is<bool>())    g_settings.canAutoBaud = doc["autobaud"];
+                if (doc["scanMs"].is<uint32_t>())  g_settings.canScanMs   = doc["scanMs"];
+                settings_save(g_settings);
+            }
+            _canBusy = true;
+            xTaskCreatePinnedToCore([](void*){
+                uint32_t br = g_settings.canBitrate;
+                if (g_settings.canAutoBaud) {
+                    br = CanScan.autoDetectBitrate(1200);
+                    if (br == 0) { _canBusy = false; vTaskDelete(nullptr); return; }
+                    g_settings.canBitrate = br;
+                    settings_save(g_settings);
+                } else {
+                    CanScan.setMode(true);
+                    if (!CanScan.begin(br)) { _canBusy = false; vTaskDelete(nullptr); return; }
+                }
+                g_last_can_web = CanScan.scanPassive(g_settings.canScanMs);
+                CanScan.end();
+                _canBusy = false;
+                vTaskDelete(nullptr);
+            }, "can_web", 6144, nullptr, 1, nullptr, 1);
+            req->send(202, "application/json", "{\"status\":\"started\"}");
+        });
+
+    server.on("/api/can/send", HTTP_POST,
+        [](AsyncWebServerRequest *req){},
+        nullptr,
+        [](AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t, size_t){
+            JsonDocument doc;
+            if (deserializeJson(doc, data, len)) {
+                req->send(400, "application/json", "{\"error\":\"json\"}"); return;
+            }
+            uint32_t id   = doc["id"]       | 0;
+            bool ext      = doc["extended"] | false;
+            String hex    = doc["data"].as<String>();
+            uint32_t br   = doc["bitrate"]  | g_settings.canBitrate;
+
+            uint8_t buf[8] = {0};
+            uint8_t dlc = 0;
+            hex.replace(" ", "");
+            for (size_t i = 0; i + 1 < hex.length() && dlc < 8; i += 2) {
+                buf[dlc++] = (uint8_t)strtol(hex.substring(i, i+2).c_str(), nullptr, 16);
+            }
+            CanScan.setMode(false);
+            if (!CanScan.begin(br)) {
+                req->send(500, "application/json",
+                    (String("{\"error\":\"") + CanScan.lastError() + "\"}").c_str());
+                return;
+            }
+            bool ok = CanScan.sendFrame(id, ext, buf, dlc, 500);
+            String err = CanScan.lastError();
+            CanScan.end();
+            CanScan.setMode(true); // revert
+            if (!ok) {
+                req->send(500, "application/json",
+                    (String("{\"error\":\"") + err + "\"}").c_str());
+                return;
+            }
+            req->send(200, "application/json", "{\"ok\":true}");
+        });
 
     server.onNotFound([](AsyncWebServerRequest *r){
         r->send(404, "application/json", "{\"error\":\"not found\"}");

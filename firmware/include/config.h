@@ -11,27 +11,27 @@
 // SP3485 switches direction automatically; no DE/RE pin
 #define RS485_DE_PIN        -1
 
-// ---- CAN (TJA1051T) - zarezerwowane, nie używane w tym projekcie ----
-#define CAN_TX_PIN          0
-#define CAN_RX_PIN          15 // uwaga: współdzielone, ignorujemy w fazie 1
+// ---- CAN (TJA1051T via ESP32 TWAI) ----
+#define CAN_TX_PIN          6
+#define CAN_RX_PIN          0
 
-// ---- Touch GT911 (I2C) ----
+// Default bitrates to try during auto-detect (bps)
+#define CAN_DEFAULT_BITRATE 500000
+static const uint32_t CAN_BITRATE_CANDIDATES[] = {
+    500000, 250000, 125000, 1000000, 100000, 50000
+};
+#define CAN_BITRATE_COUNT (sizeof(CAN_BITRATE_CANDIDATES)/sizeof(uint32_t))
+
+// ---- Touch GT911 + CH32V003 helper (shared I2C) ----
 #define TOUCH_I2C_SDA       15
 #define TOUCH_I2C_SCL       7
-#define TOUCH_INT_PIN       4
-#define TOUCH_RST_PIN       -1  // reset via IO expander/CH32V003
-#define TOUCH_I2C_ADDR      0x5D
 
-// ---- Backlight / System helper (CH32V003) ----
-#define SYS_HELPER_I2C_ADDR 0x24
+// ---- MicroSD (SD_MMC 1-bit, per Waveshare 10_LVGL_SD) ----
+#define SD_MMC_CLK          2
+#define SD_MMC_CMD          1
+#define SD_MMC_D0           4
 
-// ---- MicroSD (SPI) ----
-#define SD_SPI_CS           10
-#define SD_SPI_MOSI         11
-#define SD_SPI_CLK          12
-#define SD_SPI_MISO         13
-
-// ---- Display (ST7701 RGB) handled by ESP32_Display_Panel BSP ----
+// ---- Display (ST7701 RGB) pins live in display.cpp ----
 
 // =========================================================
 // Modbus defaults

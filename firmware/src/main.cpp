@@ -19,13 +19,13 @@ void setup() {
     settings_begin();
     settings_load(g_settings);
 
+    display_init();      // must precede SD: GPIO1/2 shared with LCD init SPI
+    display_backlight(90);
     storage_begin();
 
     Scanner.begin();
     Scanner.applySerial(g_settings.baudrate, g_settings.parity, g_settings.stopBits);
 
-    display_init();
-    display_backlight(90);
     ui_init();
 
     // WiFi + Web (non-blocking long tasks moved to separate task)

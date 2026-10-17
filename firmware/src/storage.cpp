@@ -1,17 +1,17 @@
 #include "storage.h"
 #include "config.h"
-#include <SPI.h>
-#include <SD.h>
+#include <SD_MMC.h>
 #include <time.h>
 
 static bool _sdOk = false;
 
+// Must be called AFTER display_init(): GPIO1/2 are shared with the ST7701 init SPI.
 bool storage_begin() {
-    SPI.begin(SD_SPI_CLK, SD_SPI_MISO, SD_SPI_MOSI, SD_SPI_CS);
-    _sdOk = SD.begin(SD_SPI_CS, SPI, 20000000);
+    SD_MMC.setPins(SD_MMC_CLK, SD_MMC_CMD, SD_MMC_D0);
+    _sdOk = SD_MMC.begin("/sdcard", true);  // 1-bit mode
     if (_sdOk) {
-        if (!SD.exists(LOG_FILE_DIR)) SD.mkdir(LOG_FILE_DIR);
-        log_i("SD mounted, size=%llu MB", SD.cardSize() / (1024ULL * 1024ULL));
+        if (!SD_MMC.exists(LOG_FILE_DIR)) SD_MMC.mkdir(LOG_FILE_DIR);
+        log_i("SD mounted, size=%llu MB", SD_MMC.cardSize() / (1024ULL * 1024ULL));
     } else {
         log_w("SD not available");
     }
@@ -22,13 +22,7 @@ bool storage_sd_available() { return _sdOk; }
 
 static String todayStamp() {
     time_t now = time(nullptr);
-    if (now < 1700000000) {
-        // RTC not set; use uptime-based filename
-        uint32_t s = millis() / 1000;
-        char buf[32];
-        snprintf(buf, sizeof(buf), "uptime-%lu", (unsigned long)s / 86400);
-        return String(buf);
-    }
+    if (now < 1700000000) return "nodate";
     struct tm tmv;
     localtime_r(&now, &tmv);
     char buf[16];
@@ -38,19 +32,15 @@ static String todayStamp() {
 
 void storage_log_event(const String &line) {
     if (!_sdOk) return;
-    String path = String(LOG_FILE_DIR) + "/" + todayStamp() + ".csv";
-    File f = SD.open(path, FILE_APPEND);
+    File f = SD_MMC.open(String(LOG_FILE_DIR) + "/" + todayStamp() + ".csv", FILE_APPEND);
     if (!f) return;
-    f.print(millis());
-    f.print(',');
-    f.println(line);
+    f.printf("%lu,%s\n", (unsigned long)millis(), line.c_str());
     f.close();
 }
 
 void storage_write_scan_csv(const String &csv) {
     if (!_sdOk) return;
-    String path = String(LOG_FILE_DIR) + "/scan-" + String(millis()) + ".csv";
-    File f = SD.open(path, FILE_WRITE);
+    File f = SD_MMC.open(String(LOG_FILE_DIR) + "/scan-" + String(millis()) + ".csv", FILE_WRITE);
     if (!f) return;
     f.print(csv);
     f.close();

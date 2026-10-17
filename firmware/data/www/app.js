@@ -90,7 +90,66 @@ $('#btnRead').addEventListener('click', async () => {
 
 loadSettings();
 refreshStatus();
-setInterval(refreshStatus, 2500);
+
+// ====================== CAN ======================
+let canPolling = null;
+const hexId = (n) => n.extended
+  ? '0x' + n.id.toString(16).toUpperCase().padStart(8, '0')
+  : '0x' + n.id.toString(16).toUpperCase().padStart(3, '0');
+
+async function refreshCan() {
+  try {
+    const j = await (await fetch('/api/can/status')).json();
+    $('#canStatus').textContent = j.busy ? 'Nasłuch...' : `Gotowy (${j.bitrate} bps)`;
+    const tbody = $('#canTable tbody');
+    tbody.innerHTML = '';
+    (j.nodes || []).forEach(n => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${hexId(n)}</td><td>${n.extended ? '29-bit' : '11-bit'}</td>
+                      <td>${n.dlc}</td><td>${n.frames}</td><td>${n.data || ''}</td>`;
+      tbody.appendChild(tr);
+    });
+    if (!j.busy && canPolling) { clearInterval(canPolling); canPolling = null; }
+    return j;
+  } catch (e) {}
+}
+
+(async () => {
+  const j = await refreshCan();
+  if (j) {
+    $('#c_bitrate').value = j.bitrate;
+    $('#c_ms').value = j.scanMs;
+    $('#c_auto').checked = !!j.autobaud;
+  }
+})();
+
+$('#btnCanScan').addEventListener('click', async () => {
+  const r = await fetch('/api/can/scan', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      bitrate: Number($('#c_bitrate').value),
+      scanMs: Number($('#c_ms').value),
+      autobaud: $('#c_auto').checked,
+    })
+  });
+  if (r.status === 409) { $('#canStatus').textContent = 'Zajęty'; return; }
+  $('#canStatus').textContent = 'Nasłuch...';
+  if (!canPolling) canPolling = setInterval(refreshCan, 1000);
+});
+
+$('#btnCanSend').addEventListener('click', async () => {
+  const r = await fetch('/api/can/send', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      id: parseInt($('#c_tx_id').value, 16),
+      extended: $('#c_tx_ext').checked,
+      data: $('#c_tx_data').value,
+      bitrate: Number($('#c_bitrate').value),
+    })
+  });
+  const j = await r.json();
+  $('#canTxOut').textContent = j.ok ? 'Wysłano.' : ('Błąd: ' + (j.error || r.status));
+});
 
 // ====================== AI Assistant ======================
 const AI_URL_KEY = 'ai_backend_url';

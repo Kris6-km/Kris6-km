@@ -21,6 +21,10 @@ void settings_load(ScannerSettings &s) {
     String pass = prefs.getString("pass", "");
     strncpy(s.wifiSsid, ssid.c_str(), sizeof(s.wifiSsid) - 1);
     strncpy(s.wifiPass, pass.c_str(), sizeof(s.wifiPass) - 1);
+
+    s.canBitrate  = prefs.getUInt("canbr", 500000);
+    s.canScanMs   = prefs.getUInt("canms", 10000);
+    s.canAutoBaud = prefs.getBool("canauto", false);
 }
 
 void settings_save(const ScannerSettings &s) {
@@ -34,4 +38,8 @@ void settings_save(const ScannerSettings &s) {
     prefs.putBool("wifi", s.wifiEnabled);
     prefs.putString("ssid", s.wifiSsid);
     prefs.putString("pass", s.wifiPass);
+
+    prefs.putUInt("canbr",   s.canBitrate);
+    prefs.putUInt("canms",   s.canScanMs);
+    prefs.putBool("canauto", s.canAutoBaud);
 }

@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "display.h"
 #include "modbus_scanner.h"
+#include "can_scanner.h"
 #include "settings.h"
 #include "storage.h"
 #include "config.h"
@@ -37,7 +38,18 @@ static lv_obj_t *ta_reg_start;
 static lv_obj_t *ta_reg_count;
 static lv_obj_t *tbl_regs;
 
-static std::vector<ModbusDevice> g_last_scan;
+extern std::vector<ModbusDevice> g_last_scan;
+
+// CAN state
+static lv_obj_t *dd_can_bitrate;
+static lv_obj_t *sw_can_autobaud;
+static lv_obj_t *ta_can_dur;
+static lv_obj_t *lbl_can_status;
+static lv_obj_t *bar_can;
+static lv_obj_t *tbl_can;
+static std::vector<CanNode> g_last_can;
+static const char *can_bitrate_opts   = "50000\n100000\n125000\n250000\n500000\n1000000";
+static const uint32_t can_bitrate_vals[] = {50000, 100000, 125000, 250000, 500000, 1000000};
 
 // ----------------------- helpers ------------------------
 static const char *baud_options  = "4800\n9600\n19200\n38400\n57600\n115200";
@@ -243,12 +255,12 @@ static void build_tab_settings(lv_obj_t *tab) {
         return l;
     };
 
-    makeLabel("Prędkość (baud)");
+    makeLabel("Predkosc (baud)");
     dd_baud = lv_dropdown_create(tab);
     lv_dropdown_set_options(dd_baud, baud_options);
     lv_dropdown_set_selected(dd_baud, baudToIndex(g_settings.baudrate));
 
-    makeLabel("Parzystość");
+    makeLabel("Parzystosc");
     dd_parity = lv_dropdown_create(tab);
     lv_dropdown_set_options(dd_parity, parity_options);
     lv_dropdown_set_selected(dd_parity, g_settings.parity);
@@ -263,14 +275,14 @@ static void build_tab_settings(lv_obj_t *tab) {
     lv_obj_set_width(row1, LV_PCT(100));
     sw_autobaud = lv_switch_create(row1);
     if (g_settings.autoBaud) lv_obj_add_state(sw_autobaud, LV_STATE_CHECKED);
-    lv_obj_t *l1 = lv_label_create(row1); lv_label_set_text(l1, "Auto-detekcja prędkości");
+    lv_obj_t *l1 = lv_label_create(row1); lv_label_set_text(l1, "Auto-detekcja predkosci");
 
     lv_obj_t *row2 = lv_obj_create(tab); lv_obj_remove_style_all(row2);
     lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_gap(row2, 8, 0);
     lv_obj_set_width(row2, LV_PCT(100));
     sw_logsd = lv_switch_create(row2);
     if (g_settings.logToSd) lv_obj_add_state(sw_logsd, LV_STATE_CHECKED);
-    lv_obj_t *l2 = lv_label_create(row2); lv_label_set_text(l2, "Logowanie na kartę SD");
+    lv_obj_t *l2 = lv_label_create(row2); lv_label_set_text(l2, "Logowanie na karte SD");
 
     makeLabel("Zakres skanowania (od - do)");
     lv_obj_t *rowR = lv_obj_create(tab); lv_obj_remove_style_all(rowR);
@@ -344,6 +356,157 @@ static void build_tab_regs(lv_obj_t *tab) {
     lv_table_set_cell_value(tbl_regs, 0, 2, "Hex");
 }
 
+// ----------------------- CAN scan task -----------------
+static void can_scan_task(void *) {
+    g_last_can.clear();
+    lv_async_call([](void*){
+        display_lock();
+        lv_table_set_row_cnt(tbl_can, 1);
+        lv_bar_set_value(bar_can, 0, LV_ANIM_OFF);
+        lv_label_set_text(lbl_can_status, "Nasluch CAN...");
+        display_unlock();
+    }, nullptr);
+
+    uint32_t bitrate = g_settings.canBitrate;
+    if (g_settings.canAutoBaud) {
+        bitrate = CanScan.autoDetectBitrate(1200);
+        if (bitrate == 0) {
+            lv_async_call([](void*){
+                lv_label_set_text(lbl_can_status, "Nie wykryto ruchu CAN.");
+            }, nullptr);
+            vTaskDelete(nullptr);
+            return;
+        }
+        g_settings.canBitrate = bitrate;
+        settings_save(g_settings);
+    } else {
+        CanScan.setMode(true);  // ensure listen-only
+        if (!CanScan.begin(bitrate)) {
+            String err = CanScan.lastError();
+            char *copy = strdup(err.c_str());
+            lv_async_call([](void *v){
+                lv_label_set_text_fmt(lbl_can_status, "Blad: %s", (const char*)v);
+                free(v);
+            }, copy);
+            vTaskDelete(nullptr);
+            return;
+        }
+    }
+
+    g_last_can = CanScan.scanPassive(g_settings.canScanMs,
+        [](uint32_t el, uint32_t tot, size_t ids, uint32_t frames) {
+            struct Msg { uint32_t el, tot; size_t ids; uint32_t fr; };
+            auto *m = new Msg{ el, tot, ids, frames };
+            lv_async_call([](void *v){
+                auto *mm = (Msg*)v;
+                int pct = mm->tot ? (int)(mm->el * 100 / mm->tot) : 0;
+                lv_bar_set_value(bar_can, pct, LV_ANIM_OFF);
+                lv_label_set_text_fmt(lbl_can_status,
+                    "Nasluch %u/%u ms  |  %u ID  |  %u ramek",
+                    mm->el, mm->tot, (unsigned)mm->ids, mm->fr);
+                delete mm;
+            }, m);
+        });
+
+    CanScan.end();
+
+    lv_async_call([](void*){
+        lv_table_set_col_cnt(tbl_can, 4);
+        lv_table_set_cell_value(tbl_can, 0, 0, "ID");
+        lv_table_set_cell_value(tbl_can, 0, 1, "Typ");
+        lv_table_set_cell_value(tbl_can, 0, 2, "DLC");
+        lv_table_set_cell_value(tbl_can, 0, 3, "Ramki");
+        lv_table_set_row_cnt(tbl_can, g_last_can.size() + 1);
+        char buf[24];
+        for (size_t i = 0; i < g_last_can.size(); ++i) {
+            auto &n = g_last_can[i];
+            snprintf(buf, sizeof(buf), n.extended ? "0x%08X" : "0x%03X", n.id);
+            lv_table_set_cell_value(tbl_can, i+1, 0, buf);
+            lv_table_set_cell_value(tbl_can, i+1, 1, n.extended ? "29" : "11");
+            snprintf(buf, sizeof(buf), "%u", n.dlc);
+            lv_table_set_cell_value(tbl_can, i+1, 2, buf);
+            snprintf(buf, sizeof(buf), "%u", n.frameCount);
+            lv_table_set_cell_value(tbl_can, i+1, 3, buf);
+        }
+        lv_label_set_text_fmt(lbl_can_status, "Zakonczono. Unikalne ID: %u",
+            (unsigned)g_last_can.size());
+    }, nullptr);
+
+    if (g_settings.logToSd && storage_sd_available() && !g_last_can.empty()) {
+        String csv = "id,type,dlc,frames\n";
+        char buf[32];
+        for (auto &n : g_last_can) {
+            snprintf(buf, sizeof(buf), n.extended ? "0x%08X,29," : "0x%03X,11,", n.id);
+            csv += buf;
+            csv += String(n.dlc) + "," + String(n.frameCount) + "\n";
+        }
+        storage_write_scan_csv(csv);
+    }
+    vTaskDelete(nullptr);
+}
+
+static void on_can_scan_btn(lv_event_t *) {
+    g_settings.canBitrate = can_bitrate_vals[lv_dropdown_get_selected(dd_can_bitrate)];
+    g_settings.canAutoBaud = lv_obj_has_state(sw_can_autobaud, LV_STATE_CHECKED);
+    g_settings.canScanMs   = constrain(atoi_safe(ta_can_dur, 10000), 500, 300000);
+    settings_save(g_settings);
+    xTaskCreatePinnedToCore(can_scan_task, "can_scan", 6144, nullptr, 1, nullptr, 1);
+}
+
+static void build_tab_can(lv_obj_t *tab) {
+    lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(tab, 12, 0);
+    lv_obj_set_style_pad_gap(tab, 10, 0);
+
+    lv_obj_t *l1 = lv_label_create(tab);
+    lv_label_set_text(l1, "Predkosc CAN (bps)");
+    dd_can_bitrate = lv_dropdown_create(tab);
+    lv_dropdown_set_options(dd_can_bitrate, can_bitrate_opts);
+    // Set current selection
+    int sel = 4; // 500k default
+    for (int i = 0; i < (int)(sizeof(can_bitrate_vals)/sizeof(uint32_t)); ++i)
+        if (can_bitrate_vals[i] == g_settings.canBitrate) { sel = i; break; }
+    lv_dropdown_set_selected(dd_can_bitrate, sel);
+
+    lv_obj_t *row = lv_obj_create(tab); lv_obj_remove_style_all(row);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_gap(row, 8, 0);
+    lv_obj_set_width(row, LV_PCT(100));
+    sw_can_autobaud = lv_switch_create(row);
+    if (g_settings.canAutoBaud) lv_obj_add_state(sw_can_autobaud, LV_STATE_CHECKED);
+    lv_obj_t *lsw = lv_label_create(row); lv_label_set_text(lsw, "Auto-detekcja predkosci");
+
+    lv_obj_t *l2 = lv_label_create(tab);
+    lv_label_set_text(l2, "Czas nasluchu [ms]");
+    ta_can_dur = lv_textarea_create(tab);
+    lv_textarea_set_one_line(ta_can_dur, true);
+    lv_textarea_set_accepted_chars(ta_can_dur, "0123456789");
+    char dbuf[16]; snprintf(dbuf, sizeof(dbuf), "%u", g_settings.canScanMs);
+    lv_textarea_set_text(ta_can_dur, dbuf);
+
+    lv_obj_t *btn = lv_btn_create(tab);
+    lv_obj_set_height(btn, 48);
+    lv_obj_add_event_cb(btn, on_can_scan_btn, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *lb = lv_label_create(btn);
+    lv_label_set_text(lb, LV_SYMBOL_REFRESH " Nasluchuj CAN");
+    lv_obj_center(lb);
+
+    bar_can = lv_bar_create(tab);
+    lv_obj_set_width(bar_can, LV_PCT(100));
+    lv_bar_set_range(bar_can, 0, 100);
+
+    lbl_can_status = lv_label_create(tab);
+    lv_label_set_text(lbl_can_status, "Gotowy do nasluchu CAN.");
+
+    tbl_can = lv_table_create(tab);
+    lv_obj_set_width(tbl_can, LV_PCT(100));
+    lv_obj_set_flex_grow(tbl_can, 1);
+    lv_table_set_col_cnt(tbl_can, 4);
+    lv_table_set_cell_value(tbl_can, 0, 0, "ID");
+    lv_table_set_cell_value(tbl_can, 0, 1, "Typ");
+    lv_table_set_cell_value(tbl_can, 0, 2, "DLC");
+    lv_table_set_cell_value(tbl_can, 0, 3, "Ramki");
+}
+
 void ui_init() {
     display_lock();
 
@@ -362,10 +525,12 @@ void ui_init() {
     lv_obj_t *tab1 = lv_tabview_add_tab(tabview, LV_SYMBOL_WIFI "  Skaner");
     lv_obj_t *tab2 = lv_tabview_add_tab(tabview, LV_SYMBOL_SETTINGS "  Ustawienia");
     lv_obj_t *tab3 = lv_tabview_add_tab(tabview, LV_SYMBOL_LIST "  Rejestry");
+    lv_obj_t *tab4 = lv_tabview_add_tab(tabview, LV_SYMBOL_SHUFFLE "  CAN");
 
     build_tab_scan(tab1);
     build_tab_settings(tab2);
     build_tab_regs(tab3);
+    build_tab_can(tab4);
 
     // make list items clickable to jump to register-read tab
     lv_obj_add_event_cb(list_devices, on_device_clicked, LV_EVENT_CLICKED, nullptr);
@@ -407,7 +572,7 @@ static void result_apply(void *v) {
         lv_obj_add_event_cb(btn, on_device_clicked, LV_EVENT_CLICKED, nullptr);
     }
     lv_bar_set_value(bar_progress, 100, LV_ANIM_ON);
-    char buf[64]; snprintf(buf, sizeof(buf), "Zakończono. Znaleziono: %d", count);
+    char buf[64]; snprintf(buf, sizeof(buf), "Zakonczono. Znaleziono: %d", count);
     lv_label_set_text(lbl_status, buf);
 }
 

@@ -36,13 +36,25 @@ ESP32 nie łączy się bezpośrednio z OpenAI – klucz nigdy nie opuszcza chmur
 | RS-485 TX | GPIO44                                |
 | RS-485 RX | GPIO43                                |
 | RS-485 DIR| auto (SP3485, brak linii DE/RE)       |
-| Touch SDA | GPIO15                                |
-| Touch SCL | GPIO7                                 |
-| Touch INT | GPIO4                                 |
-| SD CS     | GPIO10                                |
-| SD MOSI   | GPIO11                                |
-| SD CLK    | GPIO12                                |
-| SD MISO   | GPIO13                                |
+| CAN TX    | GPIO6 (TJA1051T)                      |
+| CAN RX    | GPIO0 (TJA1051T)                      |
+| I2C SDA (GT911 + CH32V003) | GPIO15               |
+| I2C SCL (GT911 + CH32V003) | GPIO7                |
+| SD_MMC CLK / CMD / D0 (1-bit) | GPIO2 / GPIO1 / GPIO4 |
+
+Piny zgodne z oficjalnymi przykładami Waveshare (`examples/arduino`). Sterownik ekranu, dotyku
+i CH32V003 (`GFX_Library_for_Arduino`, `SensorLib`, `WS_CH32_IO`) są dołączone w `lib/`.
+
+## Skaner CAN
+
+Zakładka **CAN** (LCD i WebUI) nasłuchuje magistrali w trybie *listen-only* (nie zakłóca sieci,
+nie wysyła ACK) i zbiera unikalne identyfikatory 11/29-bit: liczba ramek, DLC, ostatnie dane.
+- Prędkości: 50k / 100k / 125k / 250k / 500k / 1M, lub **auto-detekcja** (próbuje kolejno do wykrycia ruchu)
+- Czas nasłuchu konfigurowalny (domyślnie 10 s); wynik zapisywany na SD jako CSV
+- WebUI: dodatkowo wysyłanie pojedynczej ramki testowej (tryb normalny, np. zapytanie OBD-II `7DF 02 01 00`)
+- Uwaga: CAN nie ma "adresów slave" jak Modbus — widoczne są tylko węzły, które same nadają.
+  Auto-detekcja w trybie listen-only wymaga co najmniej dwóch aktywnych węzłów na magistrali
+  (ktoś musi potwierdzać ramki ACK).
 
 ---
 
@@ -94,8 +106,7 @@ W zakładce "AI Asystent":
 - **Czat** – zadaj dowolne pytanie; AI dostaje w kontekście ostatnie wyniki skanu
   i odczytane rejestry, więc odpowiada konkretnie
 
-## Przyszłe rozszerzenia (poza zakresem fazy 1)
-- CAN bus skaner (TJA1051T jest już na płytce)
+## Przyszłe rozszerzenia
 - Zapis rejestrów (Function Code 0x06 / 0x10)
 - Harmonogram cyklicznych odczytów
 - Eksport długoterminowy do InfluxDB / MQTT

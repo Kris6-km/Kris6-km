@@ -1,91 +1,98 @@
 #include "display.h"
 #include "config.h"
 #include <Arduino.h>
+#include <Wire.h>
 #include <lvgl.h>
-#include <ESP_Panel_Library.h>
+#include "Arduino_GFX_Library.h"
+#include "TouchDrvGT911.hpp"
+#include "WS_CH32_IO.h"
 
-// LVGL display driver glue for Waveshare ESP32-S3-Touch-LCD-4 using ESP32_Display_Panel.
-// Board config and pins are taken from the library's board profile selected via
-// ESP_PANEL_USE_SUPPORTED_BOARD at build time (handled by lib). If not auto-detected
-// at compile, user can switch to manual init.
+// Display init mirrors Waveshare's official 09_LVGL_Widgets example.
+static Arduino_DataBus *bus = new Arduino_SWSPI(
+    GFX_NOT_DEFINED, 42 /* CS */, 2 /* SCK */, 1 /* MOSI */, GFX_NOT_DEFINED);
 
-static ESP_Panel *panel = nullptr;
+static Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
+    40, 39, 38, 41,                 // DE, VSYNC, HSYNC, PCLK
+    46, 3, 8, 18, 17,               // R0..R4
+    14, 13, 12, 11, 10, 9,          // G0..G5
+    5, 45, 48, 47, 21,              // B0..B4
+    1, 10, 8, 50,                   // hsync pol, fp, pw, bp
+    1, 10, 8, 20);                  // vsync pol, fp, pw, bp
+
+static Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
+    480, 480, rgbpanel, 2, true, bus, GFX_NOT_DEFINED,
+    st7701_type1_init_operations, sizeof(st7701_type1_init_operations));
+
+static TouchDrvGT911 GT911;
+static bool touchOk = false;
 static SemaphoreHandle_t lvgl_mux = nullptr;
-
-#define LCD_H_RES 480
-#define LCD_V_RES 480
-
-// LVGL draw buffer (double-buffered, in PSRAM)
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t *buf1 = nullptr;
-static lv_color_t *buf2 = nullptr;
 
-static void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
-    panel->getLcd()->drawBitmap(area->x1, area->y1,
-                                area->x2 - area->x1 + 1,
-                                area->y2 - area->y1 + 1,
-                                (const uint8_t *)color_p);
+static void flush_cb(lv_disp_drv_t *drv, const lv_area_t *a, lv_color_t *px) {
+    gfx->draw16bitRGBBitmap(a->x1, a->y1, (uint16_t *)&px->full, a->x2 - a->x1 + 1, a->y2 - a->y1 + 1);
     lv_disp_flush_ready(drv);
 }
 
-static void lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
-    if (!panel || !panel->getTouch()) {
-        data->state = LV_INDEV_STATE_REL;
-        return;
-    }
-    panel->getTouch()->readData();
-    bool touched = panel->getTouch()->getTouchState();
-    if (touched) {
-        TouchPoint p = panel->getTouch()->getPoint();
-        data->point.x = p.x;
-        data->point.y = p.y;
+static void touch_cb(lv_indev_drv_t *, lv_indev_data_t *data) {
+    int16_t x[1], y[1];
+    if (touchOk && GT911.getPoint(x, y, 1) > 0) {
+        // rotation 2 => mirror both axes
+        data->point.x = gfx->width() - x[0];
+        data->point.y = gfx->height() - y[0];
         data->state = LV_INDEV_STATE_PR;
     } else {
         data->state = LV_INDEV_STATE_REL;
     }
 }
 
-void display_lock()   { if (lvgl_mux) xSemaphoreTake(lvgl_mux, portMAX_DELAY); }
-void display_unlock() { if (lvgl_mux) xSemaphoreGive(lvgl_mux); }
+static bool init_touch() {
+    for (uint8_t addr : {GT911_SLAVE_ADDRESS_L, GT911_SLAVE_ADDRESS_H}) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() != 0) continue;
+        GT911.setPins(-1, -1);
+        if (GT911.begin(Wire, addr, TOUCH_I2C_SDA, TOUCH_I2C_SCL)) {
+            GT911.setMaxTouchPoint(1);
+            return true;
+        }
+    }
+    return false;
+}
+
+void display_lock()   { if (lvgl_mux) xSemaphoreTakeRecursive(lvgl_mux, portMAX_DELAY); }
+void display_unlock() { if (lvgl_mux) xSemaphoreGiveRecursive(lvgl_mux); }
 
 void display_init() {
-    lvgl_mux = xSemaphoreCreateMutex();
+    lvgl_mux = xSemaphoreCreateRecursiveMutex();
 
-    panel = new ESP_Panel();
-    panel->init();
-#if LVGL_PORT_AVOID_TEAR
-    auto lcd_bus = panel->getLcd()->getBus();
-    if (lcd_bus->getType() == ESP_PANEL_BUS_TYPE_RGB) {
-        static_cast<ESP_PanelBus_RGB *>(lcd_bus)->configRgbFrameBufferNumber(3);
-    }
-#endif
-    panel->begin();
+    // CH32V003 powers LCD + releases LCD/touch reset
+    if (!WS_CH32_IO::begin(Wire, TOUCH_I2C_SDA, TOUCH_I2C_SCL, WS_CH32_IO::DEFAULT_I2C_FREQ, &Serial))
+        log_w("CH32V003 IO expander init failed");
+    touchOk = init_touch();
+    log_i("GT911 touch: %s", touchOk ? "OK" : "not found");
 
+    gfx->begin();
     lv_init();
 
-    size_t buf_px = LCD_H_RES * 80;
-    buf1 = (lv_color_t *) heap_caps_malloc(buf_px * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    buf2 = (lv_color_t *) heap_caps_malloc(buf_px * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, buf_px);
+    size_t px = 480 * 480 / 4;
+    auto *b1 = (lv_color_t *)heap_caps_malloc(px * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    auto *b2 = (lv_color_t *)heap_caps_malloc(px * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    lv_disp_draw_buf_init(&draw_buf, b1, b2, px);
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
-    disp_drv.hor_res = LCD_H_RES;
-    disp_drv.ver_res = LCD_V_RES;
-    disp_drv.flush_cb = lvgl_flush_cb;
+    disp_drv.hor_res = 480;
+    disp_drv.ver_res = 480;
+    disp_drv.flush_cb = flush_cb;
     disp_drv.draw_buf = &draw_buf;
-    disp_drv.full_refresh = 0;
     lv_disp_drv_register(&disp_drv);
 
-    if (panel->getTouch()) {
+    if (touchOk) {
         static lv_indev_drv_t indev_drv;
         lv_indev_drv_init(&indev_drv);
         indev_drv.type = LV_INDEV_TYPE_POINTER;
-        indev_drv.read_cb = lvgl_touch_cb;
+        indev_drv.read_cb = touch_cb;
         lv_indev_drv_register(&indev_drv);
     }
-
-    log_i("Display + LVGL ready (%dx%d)", LCD_H_RES, LCD_V_RES);
 }
 
 void display_tick() {
@@ -95,8 +102,5 @@ void display_tick() {
 }
 
 void display_backlight(uint8_t pct) {
-    if (!panel) return;
-    if (panel->getBacklight()) {
-        panel->getBacklight()->setBrightness(pct);
-    }
+    WS_CH32_IO::setPwm(Wire, (uint8_t)map(constrain(pct, 0, 100), 0, 100, 0, 255));
 }

@@ -16,6 +16,7 @@
   <button class="tab active" data-tab="scan">Skaner</button>
   <button class="tab" data-tab="settings">Ustawienia</button>
   <button class="tab" data-tab="regs">Rejestry</button>
+  <button class="tab" data-tab="can">CAN</button>
   <button class="tab" data-tab="ai">AI Asystent</button>
 </nav>
 
@@ -80,6 +81,34 @@
       <thead><tr><th>Adres</th><th>Dec</th><th>Hex</th><th>Status</th></tr></thead>
       <tbody></tbody>
     </table>
+  </section>
+
+  <section id="can" class="panel">
+    <div class="row">
+      <label>Prędkość (bps)
+        <select id="c_bitrate">
+          <option>50000</option><option>100000</option><option>125000</option>
+          <option>250000</option><option selected>500000</option><option>1000000</option>
+        </select>
+      </label>
+      <label>Czas nasłuchu [ms] <input id="c_ms" type="number" min="500" max="300000" value="10000" /></label>
+      <label><input id="c_auto" type="checkbox" /> Auto-detekcja prędkości</label>
+      <button id="btnCanScan" class="primary">Nasłuchuj CAN</button>
+      <span id="canStatus" class="status">Gotowy</span>
+    </div>
+    <table id="canTable">
+      <thead><tr><th>ID</th><th>Typ</th><th>DLC</th><th>Ramki</th><th>Ostatnie dane</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <h3 class="ai-h">Wyślij ramkę testową</h3>
+    <div class="row">
+      <label>ID (hex) <input id="c_tx_id" value="7DF" /></label>
+      <label><input id="c_tx_ext" type="checkbox" /> 29-bit</label>
+      <label style="flex:1">Dane (hex) <input id="c_tx_data" value="02 01 00" /></label>
+      <button id="btnCanSend" class="ghost">Wyślij</button>
+    </div>
+    <pre id="canTxOut" class="aibox"></pre>
   </section>
 
   <section id="ai" class="panel">

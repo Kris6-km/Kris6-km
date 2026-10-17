@@ -1,0 +1,5 @@
+esp32async/AsyncTCP @ ^3.3.0
+emelianov/modbus-esp8266 @ ^4.1.0
+bblanchon/ArduinoJson @ ^7.1.0
+esp32async/ESPAsyncWebServer @ ^3.7.0
+lvgl/lvgl @ 8.4.0

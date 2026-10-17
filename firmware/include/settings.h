@@ -16,6 +16,11 @@ struct ScannerSettings {
     char     wifiSsid[33] = "";
     char     wifiPass[65] = "";
     bool     wifiEnabled  = true;
+
+    // CAN
+    uint32_t canBitrate   = 500000;
+    uint32_t canScanMs    = 10000;    // 10 s default passive listen
+    bool     canAutoBaud  = false;
 };
 
 void settings_begin();
