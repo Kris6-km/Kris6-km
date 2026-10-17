@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Modbus Scanner — Waveshare ESP32-S3</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <h1>Modbus RS485 Scanner</h1>
+  <span id="ip" class="pill">—</span>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="scan">Skaner</button>
+  <button class="tab" data-tab="settings">Ustawienia</button>
+  <button class="tab" data-tab="regs">Rejestry</button>
+  <button class="tab" data-tab="ai">AI Asystent</button>
+</nav>
+
+<main>
+  <section id="scan" class="panel active">
+    <div class="row">
+      <button id="btnScan" class="primary">Skanuj magistralę</button>
+      <button id="btnRefresh" class="ghost">Odśwież</button>
+      <span id="status" class="status">Gotowy</span>
+    </div>
+    <table id="devices">
+      <thead><tr><th>ID</th><th>Baud</th><th>Parzyst.</th><th>Stop</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section id="settings" class="panel">
+    <label>Prędkość (baud)
+      <select id="s_baud">
+        <option>4800</option><option>9600</option><option>19200</option>
+        <option>38400</option><option>57600</option><option>115200</option>
+      </select>
+    </label>
+    <label>Parzystość
+      <select id="s_parity">
+        <option value="0">None</option>
+        <option value="1">Even</option>
+        <option value="2">Odd</option>
+      </select>
+    </label>
+    <label>Stop bits
+      <select id="s_stop"><option value="1">1</option><option value="2">2</option></select>
+    </label>
+    <label>Zakres skanowania od <input id="s_first" type="number" min="1" max="247" /></label>
+    <label>do <input id="s_last" type="number" min="1" max="247" /></label>
+    <label><input id="s_autobaud" type="checkbox" /> Auto-detekcja prędkości</label>
+    <label><input id="s_logsd" type="checkbox" /> Logowanie na kartę SD</label>
+    <fieldset>
+      <legend>WiFi (STA)</legend>
+      <label>SSID <input id="s_ssid" /></label>
+      <label>Hasło <input id="s_pass" type="password" /></label>
+    </fieldset>
+    <button id="btnSave" class="primary">Zapisz</button>
+  </section>
+
+  <section id="regs" class="panel">
+    <div class="row">
+      <label>Slave ID <input id="r_id" type="number" min="1" max="247" value="1" /></label>
+      <label>Typ
+        <select id="r_type">
+          <option value="holding">Holding (0x03)</option>
+          <option value="input">Input (0x04)</option>
+          <option value="coil">Coil (0x01)</option>
+          <option value="discrete">Discrete (0x02)</option>
+        </select>
+      </label>
+      <label>Start <input id="r_start" type="number" min="0" value="0" /></label>
+      <label>Count <input id="r_count" type="number" min="1" max="125" value="10" /></label>
+      <button id="btnRead" class="primary">Czytaj</button>
+    </div>
+    <table id="regTable">
+      <thead><tr><th>Adres</th><th>Dec</th><th>Hex</th><th>Status</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section id="ai" class="panel">
+    <div class="row">
+      <label style="flex:1">URL backendu AI (REACT_APP_BACKEND_URL)
+        <input id="ai_url" placeholder="https://xxx.preview.emergentagent.com" />
+      </label>
+      <label><input id="ai_autoanalyze" type="checkbox" /> Autoanaliza po skanie</label>
+    </div>
+
+    <div class="row">
+      <button id="btnAiAnalyze" class="primary">Przeanalizuj ostatni skan</button>
+      <span class="pill" id="aiModel">model: gpt-5.6-terra</span>
+    </div>
+
+    <h3 class="ai-h">Komenda w języku naturalnym</h3>
+    <div class="row">
+      <input id="ai_nlcmd" style="flex:1" placeholder='np. "Odczytaj temperaturę z urządzenia 5"' />
+      <button id="btnAiNl" class="primary">Zbuduj zapytanie</button>
+      <button id="btnAiRun" class="ghost">Wykonaj</button>
+    </div>
+    <pre id="aiCmdOut" class="aibox"></pre>
+
+    <h3 class="ai-h">Czat diagnostyczny</h3>
+    <div class="row">
+      <input id="ai_prompt" style="flex:1" placeholder="Zapytaj o cokolwiek na podstawie wyników skanu / rejestrów" />
+      <button id="btnAiChat" class="primary">Wyślij</button>
+    </div>
+    <pre id="aiStream" class="aibox"></pre>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
